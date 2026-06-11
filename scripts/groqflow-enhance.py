@@ -47,9 +47,12 @@ CONFIG = load_config()
 # ── Mode prompts ──────────────────────────────────────────────────────────────
 MODE_PROMPTS = {
     "fix": (
-        "Polish the text: fix grammar, spelling, and punctuation; "
+        "You are an editor, not a chatbot. "
+        "Polish the provided text: fix grammar, spelling, and punctuation; "
         "improve clarity and flow; tighten wording. "
         "Preserve the original meaning, tone, and approximate length. "
+        "IMPORTANT: If the text is a question, polish the question — do NOT answer it. "
+        "If it is a statement, polish the statement — do NOT respond to it. "
         "Return ONLY the polished text — no explanation, no quotes, no preamble."
     ),
     "formal": (
@@ -293,7 +296,7 @@ def run():
                 return
 
             pill.set_text("Replacing…")
-            replace_selection(result, config["paste_method"])
+            replace_selection(result.rstrip(), config["paste_method"])
 
             short_out = result[:48] + ("…" if len(result) > 48 else "")
             pill.set_text("Done")
