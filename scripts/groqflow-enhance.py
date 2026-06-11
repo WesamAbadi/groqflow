@@ -31,7 +31,7 @@ def load_config():
         "llm_model": "llama-3.3-70b-versatile",
         "enhance_mode": "fix",
         "custom_prompt": "",
-        "paste_method": "wtype",
+        "paste_method": "ctrl+v",
     }
     if os.path.exists(CONFIG_FILE):
         try:
