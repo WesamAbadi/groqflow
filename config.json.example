@@ -1,0 +1,12 @@
+{
+  "groq_api_key": "",
+  "whisper_model": "whisper-large-v3-turbo",
+  "llm_model": "llama-3.3-70b-versatile",
+  "sample_rate": 16000,
+  "silence_threshold": 0.01,
+  "silence_duration": 1.5,
+  "max_duration": 30,
+  "paste_method": "wtype",
+  "enhance_mode": "fix",
+  "custom_prompt": ""
+}

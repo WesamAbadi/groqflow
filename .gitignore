@@ -1,0 +1,20 @@
+# API keys
+config.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Cache / logs
+.cache/
+*.log
+
+# Editor
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
