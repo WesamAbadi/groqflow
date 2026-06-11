@@ -39,7 +39,7 @@ def load_config():
         "silence_threshold": 0.01,
         "silence_duration": 1.5,
         "max_duration": 30,
-        "paste_method": "wtype",
+        "paste_method": "ctrl+v",
     }
     if os.path.exists(CONFIG_FILE):
         try:
