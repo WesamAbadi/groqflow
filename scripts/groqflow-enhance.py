@@ -47,9 +47,10 @@ CONFIG = load_config()
 # ── Mode prompts ──────────────────────────────────────────────────────────────
 MODE_PROMPTS = {
     "fix": (
-        "You are a silent text editor. Fix grammar, spelling, and punctuation. "
-        "Keep the same tone, style, and length. "
-        "Return ONLY the corrected text — no explanation, no quotes, no preamble."
+        "Polish the text: fix grammar, spelling, and punctuation; "
+        "improve clarity and flow; tighten wording. "
+        "Preserve the original meaning, tone, and approximate length. "
+        "Return ONLY the polished text — no explanation, no quotes, no preamble."
     ),
     "formal": (
         "Rewrite the text in a clear, professional tone. "
@@ -75,65 +76,18 @@ MODE_PROMPTS = {
 # ── Colours ───────────────────────────────────────────────────────────────────
 PALETTE = {
     "bg":       "#0e0e10",
-    "border":   "#2a2a2e",
-    "text":     "#e8e8ec",
-    "muted":    "#6b6b78",
-    "accent":   "#7c6af7",
-    "hot":      "#f25c7c",
-    "ok":       "#56d89e",
-    "warning":  "#f0a040",
+    "text":     "#d4d4d8",
 }
-
 CSS = f"""
-window {{
-    background-color: {PALETTE['bg']};
-    border-radius: 12px;
-}}
 #pill {{
     background-color: {PALETTE['bg']};
-    border: 1px solid {PALETTE['border']};
-    border-radius: 12px;
-    padding: 10px 18px;
+    border-radius: 6px;
+    padding: 6px 16px;
 }}
-#status-label {{
+#text {{
     color: {PALETTE['text']};
     font-family: "JetBrains Mono", "Fira Code", monospace;
-    font-size: 13px;
-    font-weight: 500;
-    letter-spacing: 0.03em;
-}}
-#hint-label {{
-    color: {PALETTE['muted']};
-    font-family: "JetBrains Mono", "Fira Code", monospace;
-    font-size: 10px;
-    margin-top: 2px;
-}}
-#dot {{
-    min-width: 8px;
-    min-height: 8px;
-    border-radius: 4px;
-    background-color: {PALETTE['accent']};
-    margin-right: 10px;
-}}
-#dot.processing {{
-    background-color: {PALETTE['accent']};
-}}
-#dot.done {{
-    background-color: {PALETTE['ok']};
-}}
-#dot.warning {{
-    background-color: {PALETTE['warning']};
-}}
-#progress {{
-    min-height: 2px;
-    border-radius: 1px;
-    margin-top: 8px;
-    background-color: {PALETTE['border']};
-}}
-#progress-fill {{
-    min-height: 2px;
-    border-radius: 1px;
-    background-color: {PALETTE['accent']};
+    font-size: 11px;
 }}
 """
 
@@ -156,25 +110,22 @@ class StatusPill(Gtk.Window):
         self.set_decorated(False)
         self.set_app_paintable(True)
 
-        # gtk-layer-shell: proper Wayland overlay, no window decorations
+        # gtk-layer-shell
         try:
             GtkLayerShell.init_for_window(self)
             GtkLayerShell.set_layer(self, GtkLayerShell.Layer.OVERLAY)
-            GtkLayerShell.set_anchor(self, GtkLayerShell.Edge.RIGHT, True)
+            GtkLayerShell.set_anchor(self, GtkLayerShell.Edge.LEFT, True)
             GtkLayerShell.set_anchor(self, GtkLayerShell.Edge.BOTTOM, True)
-            GtkLayerShell.set_margin(self, GtkLayerShell.Edge.RIGHT, 24)
+            GtkLayerShell.set_margin(self, GtkLayerShell.Edge.LEFT, 24)
             GtkLayerShell.set_margin(self, GtkLayerShell.Edge.BOTTOM, 24)
             GtkLayerShell.set_keyboard_mode(self, GtkLayerShell.KeyboardMode.NONE)
             GtkLayerShell.set_namespace(self, "groqflow-enhance")
         except Exception as e:
             log_error(f"layer-shell init failed: {e}")
-            # Fallback: try to position manually (less reliable on Wayland)
             self.set_keep_above(True)
             self.set_skip_taskbar_hint(True)
             self.set_skip_pager_hint(True)
             self.connect("realize", self._fallback_position)
-
-        self.set_default_size(280, 58)
 
         # Transparency
         screen = Gdk.Screen.get_default()
@@ -182,53 +133,27 @@ class StatusPill(Gtk.Window):
         if visual:
             self.set_visual(visual)
 
+        # CSS
         provider = Gtk.CssProvider()
         provider.load_from_data(CSS.encode())
         Gtk.StyleContext.add_provider_for_screen(
-            screen, provider,
-            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
-        )
+            screen, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
-        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        outer.set_name("pill")
+        # Wrapper box for CSS #pill styling
+        pill = Gtk.Box()
+        pill.set_name("pill")
 
-        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-        row.set_valign(Gtk.Align.CENTER)
+        self.label = Gtk.Label(label="")
+        self.label.set_name("text")
+        self.label.set_halign(Gtk.Align.CENTER)
+        pill.add(self.label)
+        self.add(pill)
 
-        self.dot = Gtk.Label(label="")
-        self.dot.set_name("dot")
-        row.pack_start(self.dot, False, False, 0)
-
-        text_col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        self.status_label = Gtk.Label(label=f"Enhancing ({mode})…")
-        self.status_label.set_name("status-label")
-        self.status_label.set_halign(Gtk.Align.START)
-        self.hint_label = Gtk.Label(label="")
-        self.hint_label.set_name("hint-label")
-        self.hint_label.set_halign(Gtk.Align.START)
-        text_col.pack_start(self.status_label, False, False, 0)
-        text_col.pack_start(self.hint_label, False, False, 0)
-        row.pack_start(text_col, True, True, 0)
-
-        outer.pack_start(row, True, True, 0)
-
-        # Indeterminate progress bar
-        prog_bg = Gtk.Box()
-        prog_bg.set_name("progress")
-        self.prog_fill = Gtk.Box()
-        self.prog_fill.set_name("progress-fill")
-        self.prog_fill.set_size_request(0, 2)
-        prog_bg.add(self.prog_fill)
-        outer.pack_start(prog_bg, False, False, 0)
-
-        self.add(outer)
-        self._anim_pos = 0.0
-        self._anim_running = False
-
-        self.show_all()
+        self._last_text = ""
+        self._debounce_id = 0
+        self._shown = False
 
     def _fallback_position(self, widget):
-        """Manual positioning fallback if layer-shell is unavailable."""
         try:
             display = Gdk.Display.get_default()
             gdk_window = self.get_window()
@@ -236,54 +161,32 @@ class StatusPill(Gtk.Window):
                 monitor = display.get_monitor_at_window(gdk_window)
                 if monitor:
                     geo = monitor.get_geometry()
-                    gdk_window.move(geo.width - 280 - 24, geo.height - 58 - 24)
+                    label_h = self.label.get_allocation().height
+                    header_height = label_h + 14 if label_h > 0 else 28
+                    gdk_window.move(24, geo.height - header_height - 24)
         except Exception:
             pass
 
-    def start_progress(self):
-        self._anim_running = True
-        GLib.timeout_add(40, self._tick_progress)
+    def set_text(self, text: str):
+        """Set label text (debounced via idle_add for thread safety)."""
+        self._last_text = text
+        GLib.idle_add(self._schedule_debounce)
 
-    def _tick_progress(self):
-        if not self._anim_running:
-            return False
-        self._anim_pos = (self._anim_pos + 0.015) % 1.3
-        alloc = self.get_allocation()
-        W = max(alloc.width - 36, 100)
-        pulse = abs(((self._anim_pos % 1.0) - 0.5) * 2)
-        self.prog_fill.set_size_request(int(W * 0.15 + W * 0.35 * pulse), 2)
-        return True
-
-    def set_state(self, state: str, hint: str = ""):
-        GLib.idle_add(self._apply_state, state, hint)
-
-    def _apply_state(self, state, hint):
-        labels = {
-            "reading":    "Reading selection…",
-            "processing": "Thinking…",
-            "pasting":    "Replacing text…",
-            "done":       "Done ✓",
-            "error":      "Error",
-        }
-        self.status_label.set_text(labels.get(state, state))
-        self.hint_label.set_text(hint)
-        ctx = self.dot.get_style_context()
-        for cls in ["processing", "done", "warning"]:
-            ctx.remove_class(cls)
-        if state in ("reading", "processing", "pasting"):
-            ctx.add_class("processing")
-            if not self._anim_running:
-                self.start_progress()
-        elif state == "done":
-            ctx.add_class("done")
-            self._anim_running = False
-            self.prog_fill.set_size_request(0, 0)
-        elif state == "error":
-            ctx.add_class("warning")
-            self._anim_running = False
+    def _schedule_debounce(self):
+        if self._debounce_id:
+            GLib.source_remove(self._debounce_id)
+        self._debounce_id = GLib.timeout_add(120, self._apply_text)
         return False
 
-    def auto_close(self, delay=1.5):
+    def _apply_text(self):
+        self.label.set_text(self._last_text)
+        if not self._shown:
+            self.show_all()
+            self._shown = True
+        self._debounce_id = 0
+        return False
+
+    def auto_close(self, delay=1.0):
         GLib.timeout_add(int(delay * 1000), self._close)
 
     def _close(self):
@@ -373,33 +276,33 @@ def run():
 
     def worker():
         try:
-            pill.set_state("reading", "from PRIMARY selection")
+            pill.set_text("Reading…")
             text = get_selection()
             if not text.strip():
-                pill.set_state("error", "nothing selected — highlight text first")
+                pill.set_text("No selection")
                 pill.auto_close(3.0)
                 return
 
             short_in = text[:45] + ("…" if len(text) > 45 else "")
-            pill.set_state("processing", short_in)
+            pill.set_text("Enhancing…")
             result = enhance_text(text, config)
 
             if not result:
-                pill.set_state("error", "empty response from model")
+                pill.set_text("No response")
                 pill.auto_close(2.5)
                 return
 
-            pill.set_state("pasting", "replacing selection…")
+            pill.set_text("Replacing…")
             replace_selection(result, config["paste_method"])
 
             short_out = result[:48] + ("…" if len(result) > 48 else "")
-            pill.set_state("done", short_out)
+            pill.set_text("Done")
             pill.auto_close(2.0)
 
         except Exception as e:
             msg = str(e)[:60]
             log_error(f"worker error: {msg}")
-            pill.set_state("error", msg)
+            pill.set_text("Error")
             pill.auto_close(4.0)
 
     t = threading.Thread(target=worker, daemon=True)

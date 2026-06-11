@@ -55,61 +55,18 @@ CONFIG = load_config()
 # ── Colours ───────────────────────────────────────────────────────────────────
 PALETTE = {
     "bg":       "#0e0e10",
-    "border":   "#2a2a2e",
-    "text":     "#e8e8ec",
-    "muted":    "#6b6b78",
-    "accent":   "#7c6af7",
-    "hot":      "#f25c7c",
-    "ok":       "#56d89e",
-    "warning":  "#f0a040",
+    "text":     "#d4d4d8",
 }
-
 CSS = f"""
-window {{
-    background-color: {PALETTE['bg']};
-    border-radius: 12px;
-}}
 #pill {{
     background-color: {PALETTE['bg']};
-    border: 1px solid {PALETTE['border']};
-    border-radius: 12px;
-    padding: 10px 18px;
+    border-radius: 6px;
+    padding: 6px 16px;
 }}
-#status-label {{
+#text {{
     color: {PALETTE['text']};
     font-family: "JetBrains Mono", "Fira Code", monospace;
-    font-size: 13px;
-    font-weight: 500;
-    letter-spacing: 0.03em;
-}}
-#hint-label {{
-    color: {PALETTE['muted']};
-    font-family: "JetBrains Mono", "Fira Code", monospace;
-    font-size: 10px;
-    margin-top: 2px;
-}}
-#dot {{
-    min-width: 8px;
-    min-height: 8px;
-    border-radius: 4px;
-    background-color: {PALETTE['accent']};
-    margin-right: 10px;
-}}
-#dot.recording {{
-    background-color: {PALETTE['hot']};
-}}
-#dot.done {{
-    background-color: {PALETTE['ok']};
-}}
-#dot.warning {{
-    background-color: {PALETTE['warning']};
-}}
-#wave-bar {{
-    min-height: 3px;
-    border-radius: 2px;
-    background-color: {PALETTE['accent']};
-    margin-top: 8px;
-    transition: all 100ms;
+    font-size: 11px;
 }}
 """
 
@@ -136,21 +93,18 @@ class StatusPill(Gtk.Window):
         try:
             GtkLayerShell.init_for_window(self)
             GtkLayerShell.set_layer(self, GtkLayerShell.Layer.OVERLAY)
-            GtkLayerShell.set_anchor(self, GtkLayerShell.Edge.RIGHT, True)
+            GtkLayerShell.set_anchor(self, GtkLayerShell.Edge.LEFT, True)
             GtkLayerShell.set_anchor(self, GtkLayerShell.Edge.BOTTOM, True)
-            GtkLayerShell.set_margin(self, GtkLayerShell.Edge.RIGHT, 24)
+            GtkLayerShell.set_margin(self, GtkLayerShell.Edge.LEFT, 24)
             GtkLayerShell.set_margin(self, GtkLayerShell.Edge.BOTTOM, 24)
             GtkLayerShell.set_keyboard_mode(self, GtkLayerShell.KeyboardMode.NONE)
             GtkLayerShell.set_namespace(self, "groqflow-stt")
         except Exception as e:
             log_error(f"layer-shell init failed: {e}")
-            # Fallback: try to position manually (less reliable on Wayland)
             self.set_keep_above(True)
             self.set_skip_taskbar_hint(True)
             self.set_skip_pager_hint(True)
             self.connect("realize", self._fallback_position)
-
-        self.set_default_size(260, 56)
 
         # Transparency
         screen = Gdk.Screen.get_default()
@@ -162,50 +116,23 @@ class StatusPill(Gtk.Window):
         provider = Gtk.CssProvider()
         provider.load_from_data(CSS.encode())
         Gtk.StyleContext.add_provider_for_screen(
-            screen,
-            provider,
-            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
-        )
+            screen, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
-        # Layout
-        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        outer.set_name("pill")
+        # Wrapper box for CSS #pill styling
+        pill = Gtk.Box()
+        pill.set_name("pill")
 
-        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-        row.set_valign(Gtk.Align.CENTER)
+        self.label = Gtk.Label(label="")
+        self.label.set_name("text")
+        self.label.set_halign(Gtk.Align.CENTER)
+        pill.add(self.label)
+        self.add(pill)
 
-        self.dot = Gtk.Label(label="")
-        self.dot.set_name("dot")
-        row.pack_start(self.dot, False, False, 0)
-
-        text_col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        self.status_label = Gtk.Label(label="Ready")
-        self.status_label.set_name("status-label")
-        self.status_label.set_halign(Gtk.Align.START)
-        self.hint_label = Gtk.Label(label="")
-        self.hint_label.set_name("hint-label")
-        self.hint_label.set_halign(Gtk.Align.START)
-        text_col.pack_start(self.status_label, False, False, 0)
-        text_col.pack_start(self.hint_label, False, False, 0)
-        row.pack_start(text_col, True, True, 0)
-
-        outer.pack_start(row, True, True, 0)
-
-        # Wave bar (audio level indicator)
-        self.wave = Gtk.DrawingArea()
-        self.wave.set_name("wave-bar")
-        self.wave.set_size_request(-1, 3)
-        self.wave.connect("draw", self._draw_wave)
-        outer.pack_start(self.wave, False, False, 0)
-
-        self.add(outer)
-        self._level = 0.0
-
-        self.show_all()
-        self.wave.hide()
+        self._last_text = ""
+        self._debounce_id = 0
+        self._shown = False
 
     def _fallback_position(self, widget):
-        """Manual positioning fallback if layer-shell is unavailable."""
         try:
             display = Gdk.Display.get_default()
             gdk_window = self.get_window()
@@ -213,59 +140,32 @@ class StatusPill(Gtk.Window):
                 monitor = display.get_monitor_at_window(gdk_window)
                 if monitor:
                     geo = monitor.get_geometry()
-                    gdk_window.move(geo.width - 260 - 24, geo.height - 56 - 24)
+                    label_h = self.label.get_allocation().height
+                    header_height = label_h + 14 if label_h > 0 else 28
+                    gdk_window.move(24, geo.height - header_height - 24)
         except Exception:
             pass
 
-    def _draw_wave(self, widget, cr):
-        alloc = widget.get_allocation()
-        W, H = alloc.width, alloc.height
-        r, g, b = 0x7c/255, 0x6a/255, 0xf7/255
-        fill = max(0.0, min(1.0, self._level * 6))
-        cr.set_source_rgba(r, g, b, 0.25)
-        cr.rectangle(0, 0, W, H)
-        cr.fill()
-        cr.set_source_rgba(r, g, b, 0.9)
-        cr.rectangle(0, 0, W * fill, H)
-        cr.fill()
+    def set_text(self, text: str):
+        """Set label text (debounced via idle_add for thread safety)."""
+        self._last_text = text
+        GLib.idle_add(self._schedule_debounce)
+
+    def _schedule_debounce(self):
+        if self._debounce_id:
+            GLib.source_remove(self._debounce_id)
+        self._debounce_id = GLib.timeout_add(120, self._apply_text)
         return False
 
-    def set_state(self, state: str, hint: str = ""):
-        GLib.idle_add(self._apply_state, state, hint)
-
-    def _apply_state(self, state, hint):
-        labels = {
-            "idle":       "Ready",
-            "listening":  "Listening…",
-            "processing": "Transcribing…",
-            "done":       "Pasted ✓",
-            "error":      "Error",
-        }
-        dot_classes = {
-            "idle":       [],
-            "listening":  ["recording"],
-            "processing": [],
-            "done":       ["done"],
-            "error":      ["warning"],
-        }
-        self.status_label.set_text(labels.get(state, state))
-        self.hint_label.set_text(hint)
-        ctx = self.dot.get_style_context()
-        for cls in ["recording", "done", "warning"]:
-            ctx.remove_class(cls)
-        for cls in dot_classes.get(state, []):
-            ctx.add_class(cls)
-        if state == "listening":
-            self.wave.show()
-        else:
-            self.wave.hide()
+    def _apply_text(self):
+        self.label.set_text(self._last_text)
+        if not self._shown:
+            self.show_all()
+            self._shown = True
+        self._debounce_id = 0
         return False
 
-    def set_level(self, level: float):
-        self._level = level
-        GLib.idle_add(self.wave.queue_draw)
-
-    def auto_close(self, delay=1.8):
+    def auto_close(self, delay=1.0):
         GLib.timeout_add(int(delay * 1000), self._close)
 
     def _close(self):
@@ -286,11 +186,11 @@ class Recorder:
     def _callback(self, indata, frames, time_info, status):
         chunk = indata[:, 0].copy()
         level = float(np.abs(chunk).mean())
-        self.pill.set_level(level)
+        
         self.audio_q.put((chunk, level))
 
     def record(self):
-        self.pill.set_state("listening", "speak now — silence stops")
+        self.pill.set_text("Listening…")
         silence_count = 0
         silence_frames = int(
             self.config["silence_duration"] * self.sr / 1024
@@ -405,28 +305,28 @@ def run():
         try:
             audio = rec.record()
             if audio is None:
-                pill.set_state("error", "no speech detected")
+                pill.set_text("No speech")
                 pill.auto_close(2.0)
                 return
 
-            pill.set_state("processing", config["whisper_model"])
+            pill.set_text("Transcribing…")
             wav = rec.to_wav_bytes(audio)
             text = transcribe(wav, config)
 
             if not text:
-                pill.set_state("error", "empty transcription")
+                pill.set_text("No result")
                 pill.auto_close(2.0)
                 return
 
             paste_text(text, config["paste_method"])
             short = text[:48] + ("…" if len(text) > 48 else "")
-            pill.set_state("done", short)
+            pill.set_text("Done")
             pill.auto_close(2.0)
 
         except Exception as e:
             msg = str(e)[:60]
             log_error(f"worker error: {msg}")
-            pill.set_state("error", msg)
+            pill.set_text("Error")
             pill.auto_close(3.5)
 
     t = threading.Thread(target=worker, daemon=True)
