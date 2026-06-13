@@ -80,9 +80,12 @@ CONFIG = load_config()
 
 # ── Prompt ───────────────────────────────────────────────────────────────────
 SYSTEM_PROMPT = (
-    "You are a precise text polishing engine. "
-    "Fix grammar, spelling, punctuation, and improve clarity and flow. "
-    "Preserve the original meaning, tone, and approximate length. "
+    "You are a precise text polishing and formatting engine. "
+    "Fix grammar, spelling, punctuation. Improve clarity, word choice, and flow. "
+    "Reformat and restructure the text for readability: add paragraph breaks, "
+    "bullet points, numbered lists, headings, or line breaks as appropriate. "
+    "Turn walls of text into well-organized, scannable prose. "
+    "Preserve the original meaning and tone. Length may change to accommodate formatting. "
     "CRITICAL: If the text is a question, polish the question — do NOT answer it. "
     "If it is a statement, polish the statement — do NOT respond to it. "
     "Output valid JSON with a single key 'result' containing only the polished text."
@@ -242,6 +245,36 @@ def replace_selection(new_text, paste_method):
 
 
 # ── Groq LLM call ─────────────────────────────────────────────────────────────
+def sanitize_result(text: str) -> str:
+    """Strip common LLM artifacts: markdown fences, chatbot preambles.
+    Does NOT strip quotes or backticks — with JSON mode those are intentional content."""
+    text = text.strip()
+    # Strip surrounding markdown code fences
+    if text.startswith("```") and text.endswith("```"):
+        text = text[3:-3].strip()
+        # Remove optional language tag on opening fence
+        if "\n" in text:
+            first_newline = text.index("\n")
+            if not text[:first_newline].strip() or text[:first_newline].strip().isalpha():
+                text = text[first_newline + 1:]
+    # Strip common chatbot preambles
+    prefixes = [
+        "Here is the polished text:",
+        "Here's the polished text:",
+        "Polished text:",
+        "Result:",
+        "Here is the result:",
+        "Here's the result:",
+    ]
+    text_lower = text.lower()
+    for prefix in prefixes:
+        if text_lower.startswith(prefix.lower()):
+            text = text[len(prefix):].strip()
+            break
+    # Re-strip after prefix removal
+    return text.strip()
+
+
 def enhance_text(text, api_key, config):
     if not api_key:
         raise ValueError("GROQ_API_KEY not set. Export it in your shell environment.")
@@ -298,6 +331,7 @@ def run():
                 return
 
             pill.set_text("Replacing…")
+            result = sanitize_result(result)
             replace_selection(result.rstrip(), config["paste_method"])
 
             short_out = result[:48] + ("…" if len(result) > 48 else "")
