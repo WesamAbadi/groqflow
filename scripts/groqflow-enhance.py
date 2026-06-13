@@ -25,22 +25,26 @@ import requests
 # ── Config ────────────────────────────────────────────────────────────────────
 CONFIG_FILE = os.path.expanduser("~/.config/groqflow/config.json")
 
+DEFAULTS = {
+    "llm_model": "llama-3.3-70b-versatile",
+    "enhance_mode": "fix",
+    "custom_prompt": "",
+    "paste_method": "ctrl+v",
+}
+
 def load_config():
-    defaults = {
-        "groq_api_key": os.environ.get("GROQ_API_KEY", ""),
-        "llm_model": "llama-3.3-70b-versatile",
-        "enhance_mode": "fix",
-        "custom_prompt": "",
-        "paste_method": "ctrl+v",
-    }
+    config = dict(DEFAULTS)
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE) as f:
                 user = json.load(f)
-            defaults.update(user)
+            # Only merge non-sensitive settings from config file
+            for k in DEFAULTS:
+                if k in user:
+                    config[k] = user[k]
         except Exception:
             pass
-    return defaults
+    return config
 
 CONFIG = load_config()
 
@@ -230,10 +234,9 @@ def replace_selection(new_text, paste_method):
 
 
 # ── Groq LLM call ─────────────────────────────────────────────────────────────
-def enhance_text(text, config):
-    api_key = config["groq_api_key"]
+def enhance_text(text, api_key, config):
     if not api_key:
-        raise ValueError("GROQ_API_KEY not set in ~/.config/groqflow/config.json")
+        raise ValueError("GROQ_API_KEY not set. Export it in your shell environment.")
 
     mode = config.get("enhance_mode", "fix")
     system_prompt = MODE_PROMPTS.get(mode)
@@ -266,8 +269,7 @@ def enhance_text(text, config):
 # ── Main ──────────────────────────────────────────────────────────────────────
 def run():
     config = CONFIG
-    if not config["groq_api_key"]:
-        config["groq_api_key"] = os.environ.get("GROQ_API_KEY", "")
+    api_key = os.environ.get("GROQ_API_KEY", "")
 
     if len(sys.argv) > 1:
         mode_arg = sys.argv[1].lower()
@@ -288,7 +290,7 @@ def run():
 
             short_in = text[:45] + ("…" if len(text) > 45 else "")
             pill.set_text("Enhancing…")
-            result = enhance_text(text, config)
+            result = enhance_text(text, api_key, config)
 
             if not result:
                 pill.set_text("No response")

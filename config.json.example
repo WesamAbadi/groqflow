@@ -1,5 +1,5 @@
 {
-  "groq_api_key": "",
+  "_comment": "API key is read from the GROQ_API_KEY environment variable, not this file.",
   "whisper_model": "whisper-large-v3-turbo",
   "llm_model": "llama-3.3-70b-versatile",
   "sample_rate": 16000,

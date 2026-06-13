@@ -31,24 +31,28 @@ import requests
 # ── Config ────────────────────────────────────────────────────────────────────
 CONFIG_FILE = os.path.expanduser("~/.config/groqflow/config.json")
 
+DEFAULTS = {
+    "whisper_model": "whisper-large-v3-turbo",
+    "sample_rate": 16000,
+    "silence_threshold": 0.01,
+    "silence_duration": 1.5,
+    "max_duration": 30,
+    "paste_method": "ctrl+v",
+}
+
 def load_config():
-    defaults = {
-        "groq_api_key": os.environ.get("GROQ_API_KEY", ""),
-        "whisper_model": "whisper-large-v3-turbo",
-        "sample_rate": 16000,
-        "silence_threshold": 0.01,
-        "silence_duration": 1.5,
-        "max_duration": 30,
-        "paste_method": "ctrl+v",
-    }
+    config = dict(DEFAULTS)
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE) as f:
                 user = json.load(f)
-            defaults.update(user)
+            # Only merge non-sensitive settings from config file
+            for k in DEFAULTS:
+                if k in user:
+                    config[k] = user[k]
         except Exception:
             pass
-    return defaults
+    return config
 
 CONFIG = load_config()
 
@@ -242,10 +246,9 @@ class Recorder:
 
 
 # ── Groq transcription ────────────────────────────────────────────────────────
-def transcribe(audio_bytes, config):
-    api_key = config["groq_api_key"]
+def transcribe(audio_bytes, api_key, config):
     if not api_key:
-        raise ValueError("GROQ_API_KEY not set. Add it to ~/.config/groqflow/config.json")
+        raise ValueError("GROQ_API_KEY not set. Export it in your shell environment.")
     resp = requests.post(
         "https://api.groq.com/openai/v1/audio/transcriptions",
         headers={"Authorization": f"Bearer {api_key}"},
@@ -283,8 +286,7 @@ def paste_text(text, method):
 # ── Main flow ─────────────────────────────────────────────────────────────────
 def run():
     config = CONFIG
-    if not config["groq_api_key"]:
-        config["groq_api_key"] = os.environ.get("GROQ_API_KEY", "")
+    api_key = os.environ.get("GROQ_API_KEY", "")
 
     pill = StatusPill()
 
@@ -311,7 +313,7 @@ def run():
 
             pill.set_text("Transcribing…")
             wav = rec.to_wav_bytes(audio)
-            text = transcribe(wav, config)
+            text = transcribe(wav, api_key, config)
 
             if not text:
                 pill.set_text("No result")
