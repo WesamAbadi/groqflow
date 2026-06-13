@@ -17,6 +17,7 @@ import subprocess
 import wave
 import io
 import signal
+import atexit
 
 import gi
 gi.require_version("Gtk", "3.0")
@@ -27,6 +28,41 @@ from gi.repository import Gtk, Gdk, GLib, GtkLayerShell
 import sounddevice as sd
 import numpy as np
 import requests
+
+# ── Single-instance lock ──────────────────────────────────────────────────────
+LOCK_FILE = "/tmp/groqflow-stt.lock"
+
+def acquire_lock():
+    """Acquire the singleton lock. If another instance is running,
+    send SIGUSR1 to trigger early-stop-and-process, then exit."""
+    if os.path.exists(LOCK_FILE):
+        try:
+            with open(LOCK_FILE) as f:
+                pid = int(f.read().strip())
+            os.kill(pid, 0)  # Check if still alive
+            # Send early-stop signal to the running instance
+            os.kill(pid, signal.SIGUSR1)
+            sys.exit(0)
+        except (ValueError, ProcessLookupError, FileNotFoundError):
+            # Stale lock — clean it up
+            try:
+                os.remove(LOCK_FILE)
+            except FileNotFoundError:
+                pass
+    with open(LOCK_FILE, "w") as f:
+        f.write(str(os.getpid()))
+
+def release_lock():
+    """Remove the lock file only if we own it."""
+    try:
+        if os.path.exists(LOCK_FILE):
+            with open(LOCK_FILE) as f:
+                if int(f.read().strip()) == os.getpid():
+                    os.remove(LOCK_FILE)
+    except (ValueError, FileNotFoundError):
+        pass
+
+atexit.register(release_lock)
 
 # ── Config ────────────────────────────────────────────────────────────────────
 CONFIG_FILE = os.path.expanduser("~/.config/groqflow/config.json")
@@ -293,12 +329,15 @@ def run():
     # Signal handlers MUST be in the main thread
     recorder_ref = [None]
 
-    def _sig(signum, frame):
+    def _stop_recording(signum, frame):
         if recorder_ref[0]:
             recorder_ref[0].stop()
 
-    signal.signal(signal.SIGTERM, _sig)
-    signal.signal(signal.SIGINT, _sig)
+    # SIGTERM/SIGINT: stop and quit
+    signal.signal(signal.SIGTERM, _stop_recording)
+    signal.signal(signal.SIGINT, _stop_recording)
+    # SIGUSR1: stop recording and process captured speech (early-stop via second keypress)
+    signal.signal(signal.SIGUSR1, _stop_recording)
 
     def worker():
         rec = Recorder(config, pill)
@@ -337,6 +376,7 @@ def run():
 
 
 if __name__ == "__main__":
+    acquire_lock()
     try:
         run()
     except Exception as e:

@@ -13,6 +13,7 @@ import json
 import time
 import threading
 import subprocess
+import atexit
 
 import gi
 gi.require_version("Gtk", "3.0")
@@ -21,6 +22,37 @@ gi.require_version("GtkLayerShell", "0.1")
 from gi.repository import Gtk, Gdk, GLib, GtkLayerShell
 
 import requests
+
+# ── Single-instance lock ──────────────────────────────────────────────────────
+LOCK_FILE = "/tmp/groqflow-enhance.lock"
+
+def acquire_lock():
+    """Acquire the singleton lock. If another instance is running, exit."""
+    if os.path.exists(LOCK_FILE):
+        try:
+            with open(LOCK_FILE) as f:
+                pid = int(f.read().strip())
+            os.kill(pid, 0)  # Check if still alive
+            sys.exit(0)
+        except (ValueError, ProcessLookupError, FileNotFoundError):
+            try:
+                os.remove(LOCK_FILE)
+            except FileNotFoundError:
+                pass
+    with open(LOCK_FILE, "w") as f:
+        f.write(str(os.getpid()))
+
+def release_lock():
+    """Remove the lock file only if we own it."""
+    try:
+        if os.path.exists(LOCK_FILE):
+            with open(LOCK_FILE) as f:
+                if int(f.read().strip()) == os.getpid():
+                    os.remove(LOCK_FILE)
+    except (ValueError, FileNotFoundError):
+        pass
+
+atexit.register(release_lock)
 
 # ── Config ────────────────────────────────────────────────────────────────────
 CONFIG_FILE = os.path.expanduser("~/.config/groqflow/config.json")
@@ -51,31 +83,46 @@ CONFIG = load_config()
 # ── Mode prompts ──────────────────────────────────────────────────────────────
 MODE_PROMPTS = {
     "fix": (
-        "You are an editor, not a chatbot. "
-        "Polish the provided text: fix grammar, spelling, and punctuation; "
-        "improve clarity and flow; tighten wording. "
+        "You are a text-editing engine. Your sole function is to polish input text. "
+        "You have no personality. You do not engage in conversation. "
+        "Fix grammar, spelling, and punctuation. Improve clarity and flow. "
         "Preserve the original meaning, tone, and approximate length. "
-        "IMPORTANT: If the text is a question, polish the question — do NOT answer it. "
-        "If it is a statement, polish the statement — do NOT respond to it. "
-        "Return ONLY the polished text — no explanation, no quotes, no preamble."
+        "CRITICAL: NEVER answer, respond to, or comment on the text. "
+        "If the text is a question, polish it — do NOT answer it. "
+        "If it is a statement, polish it — do NOT respond to it. "
+        "DO NOT add introductions, explanations, summaries, or pleasantries. "
+        "Output ONLY the polished text. Nothing else. No quotes, no preamble, no suffix.\n"
+        "Example input: 'wht is the meaning of life'\n"
+        "Example output: 'What is the meaning of life?'"
     ),
     "formal": (
-        "Rewrite the text in a clear, professional tone. "
-        "Fix errors. Keep meaning intact. "
-        "Return ONLY the rewritten text."
+        "You are a text-editing engine. Your sole function is to rewrite text formally. "
+        "Rewrite the text in a clear, professional tone. Fix errors. Keep meaning intact. "
+        "CRITICAL: NEVER answer, respond to, or comment on the text. "
+        "Output ONLY the rewritten text. Nothing else.\n"
+        "Example input: 'hey can u check this out'\n"
+        "Example output: 'Could you please review this?'"
     ),
     "concise": (
+        "You are a text-editing engine. Your sole function is to condense text. "
         "Make the text shorter and punchier without losing meaning. "
         "Remove filler words and redundancies. "
-        "Return ONLY the result."
+        "CRITICAL: NEVER answer, respond to, or comment on the text. "
+        "Output ONLY the condensed text. Nothing else.\n"
+        "Example input: 'I just wanted to let you know that I think we should maybe consider\n"
+        "Example output: 'We should consider'"
     ),
     "expand": (
+        "You are a text-editing engine. Your sole function is to expand text. "
         "Expand the text with more detail and context. Keep the same tone. "
-        "Return ONLY the expanded text."
+        "CRITICAL: NEVER answer, respond to, or comment on the text. "
+        "Output ONLY the expanded text. Nothing else."
     ),
     "bullet": (
+        "You are a text-editing engine. Your sole function is to convert text to bullet points. "
         "Convert the text into a clean bullet-point list. "
-        "Return ONLY the bullet list."
+        "CRITICAL: NEVER answer, respond to, or comment on the text. "
+        "Output ONLY the bullet list. Nothing else."
     ),
     "custom": None,
 }
@@ -249,7 +296,7 @@ def enhance_text(text, api_key, config):
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": text},
         ],
-        "temperature": 0.3,
+        "temperature": 0.2,
         "max_tokens": 2048,
     }
     resp = requests.post(
@@ -316,6 +363,7 @@ def run():
 
 
 if __name__ == "__main__":
+    acquire_lock()
     try:
         run()
     except Exception as e:
