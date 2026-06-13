@@ -59,8 +59,6 @@ CONFIG_FILE = os.path.expanduser("~/.config/groqflow/config.json")
 
 DEFAULTS = {
     "llm_model": "llama-3.3-70b-versatile",
-    "enhance_mode": "fix",
-    "custom_prompt": "",
     "paste_method": "ctrl+v",
 }
 
@@ -80,52 +78,15 @@ def load_config():
 
 CONFIG = load_config()
 
-# ── Mode prompts ──────────────────────────────────────────────────────────────
-MODE_PROMPTS = {
-    "fix": (
-        "You are a text-editing engine. Your sole function is to polish input text. "
-        "You have no personality. You do not engage in conversation. "
-        "Fix grammar, spelling, and punctuation. Improve clarity and flow. "
-        "Preserve the original meaning, tone, and approximate length. "
-        "CRITICAL: NEVER answer, respond to, or comment on the text. "
-        "If the text is a question, polish it — do NOT answer it. "
-        "If it is a statement, polish it — do NOT respond to it. "
-        "DO NOT add introductions, explanations, summaries, or pleasantries. "
-        "Output ONLY the polished text. Nothing else. No quotes, no preamble, no suffix.\n"
-        "Example input: 'wht is the meaning of life'\n"
-        "Example output: 'What is the meaning of life?'"
-    ),
-    "formal": (
-        "You are a text-editing engine. Your sole function is to rewrite text formally. "
-        "Rewrite the text in a clear, professional tone. Fix errors. Keep meaning intact. "
-        "CRITICAL: NEVER answer, respond to, or comment on the text. "
-        "Output ONLY the rewritten text. Nothing else.\n"
-        "Example input: 'hey can u check this out'\n"
-        "Example output: 'Could you please review this?'"
-    ),
-    "concise": (
-        "You are a text-editing engine. Your sole function is to condense text. "
-        "Make the text shorter and punchier without losing meaning. "
-        "Remove filler words and redundancies. "
-        "CRITICAL: NEVER answer, respond to, or comment on the text. "
-        "Output ONLY the condensed text. Nothing else.\n"
-        "Example input: 'I just wanted to let you know that I think we should maybe consider\n"
-        "Example output: 'We should consider'"
-    ),
-    "expand": (
-        "You are a text-editing engine. Your sole function is to expand text. "
-        "Expand the text with more detail and context. Keep the same tone. "
-        "CRITICAL: NEVER answer, respond to, or comment on the text. "
-        "Output ONLY the expanded text. Nothing else."
-    ),
-    "bullet": (
-        "You are a text-editing engine. Your sole function is to convert text to bullet points. "
-        "Convert the text into a clean bullet-point list. "
-        "CRITICAL: NEVER answer, respond to, or comment on the text. "
-        "Output ONLY the bullet list. Nothing else."
-    ),
-    "custom": None,
-}
+# ── Prompt ───────────────────────────────────────────────────────────────────
+SYSTEM_PROMPT = (
+    "You are a precise text polishing engine. "
+    "Fix grammar, spelling, punctuation, and improve clarity and flow. "
+    "Preserve the original meaning, tone, and approximate length. "
+    "CRITICAL: If the text is a question, polish the question — do NOT answer it. "
+    "If it is a statement, polish the statement — do NOT respond to it. "
+    "Output valid JSON with a single key 'result' containing only the polished text."
+)
 
 # ── Colours ───────────────────────────────────────────────────────────────────
 PALETTE = {
@@ -159,7 +120,7 @@ def log_error(msg: str):
 
 # ── Overlay pill (gtk-layer-shell) ────────────────────────────────────────────
 class StatusPill(Gtk.Window):
-    def __init__(self, mode: str):
+    def __init__(self):
         super().__init__(type=Gtk.WindowType.TOPLEVEL)
         self.set_decorated(False)
         self.set_app_paintable(True)
@@ -285,19 +246,15 @@ def enhance_text(text, api_key, config):
     if not api_key:
         raise ValueError("GROQ_API_KEY not set. Export it in your shell environment.")
 
-    mode = config.get("enhance_mode", "fix")
-    system_prompt = MODE_PROMPTS.get(mode)
-    if mode == "custom" or system_prompt is None:
-        system_prompt = config.get("custom_prompt") or MODE_PROMPTS["fix"]
-
     payload = {
         "model": config["llm_model"],
         "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": text},
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": f"Text to polish:\n\n{text}"},
         ],
-        "temperature": 0.2,
+        "temperature": 0.1,
         "max_tokens": 2048,
+        "response_format": {"type": "json_object"},
     }
     resp = requests.post(
         "https://api.groq.com/openai/v1/chat/completions",
@@ -310,7 +267,9 @@ def enhance_text(text, api_key, config):
     )
     resp.raise_for_status()
     data = resp.json()
-    return data["choices"][0]["message"]["content"].strip()
+    parsed = json.loads(data["choices"][0]["message"]["content"])
+    # JSON mode guarantees valid JSON, but not a specific key name
+    return (parsed.get("result") or list(parsed.values())[0] if parsed else "").strip()
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -318,13 +277,7 @@ def run():
     config = CONFIG
     api_key = os.environ.get("GROQ_API_KEY", "")
 
-    if len(sys.argv) > 1:
-        mode_arg = sys.argv[1].lower()
-        if mode_arg in MODE_PROMPTS:
-            config["enhance_mode"] = mode_arg
-
-    mode = config.get("enhance_mode", "fix")
-    pill = StatusPill(mode)
+    pill = StatusPill()
 
     def worker():
         try:
